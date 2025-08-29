@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZIP文件内容提取器 - 本地服务器版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+      :root {
+        --primary-color: #3498db;
+        --secondary-color: #2980b9;
+        --success-color: #2ecc71;
+        --warning-color: #f39c12;
+        --danger-color: #e74c3c;
+        --light-color: #ecf0f1;
+        --dark-color: #2c3e50;
+      }
+
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        margin: 0;
+        padding: 20px;
+        min-height: 100px;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 30px;
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+
+      h1 {
+        color: var(--dark-color);
+        margin-bottom: 10px;
+      }
+
+      .description {
+        color: #666;
+        font-size: 1.1em;
+      }
+
+      .panels {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+
+      .panel {
+        flex: 1;
+        min-width: 300px;
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+
+      .panel-title {
+        font-size: 1.3em;
+        color: var(--dark-color);
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid var(--light-color);
+      }
+
+      .form-group {
+        margin-bottom: 15px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+        color: var(--dark-color);
+      }
+
+      input,
+      select,
+      button {
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 1em;
+      }
+
+      button {
+        background-color: var(--primary-color);
+        color: white;
+        border: none;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        font-weight: bold;
+      }
+
+      button:hover {
+        background-color: var(--secondary-color);
+      }
+
+      .status {
+        padding: 12px;
+        border-radius: 5px;
+        margin-top: 15px;
+        display: none;
+      }
+
+      .success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+
+      .error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+
+      .file-content {
+        white-space: pre-wrap;
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        max-height: 400px;
+        overflow: auto;
+        font-family: monospace;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid #ddd;
+        margin-bottom: 15px;
+      }
+
+      .tab {
+        padding: 10px 15px;
+        cursor: pointer;
+        background: #f1f1f1;
+        border: 1px solid #ddd;
+        border-bottom: none;
+        border-radius: 5px 5px 0 0;
+        margin-right: 5px;
+      }
+
+      .tab.active {
+        background: white;
+        border-bottom: 1px solid white;
+        margin-bottom: -1px;
+      }
+
+      .tab-content {
+        display: none;
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .progress-bar {
+        height: 10px;
+        background-color: #f0f0f0;
+        border-radius: 5px;
+        overflow: hidden;
+        margin-top: 10px;
+      }
+
+      .progress {
+        height: 100%;
+        background-color: var(--success-color);
+        width: 0%;
+        transition: width 0.3s;
+      }
+
+      .summary {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        margin-top: 20px;
+      }
+
+      .summary-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid #eee;
+      }
+
+      footer {
+        text-align: center;
+        margin-top: 30px;
+        color: #666;
+        font-size: 0.9em;
+      }
+
+      @media (max-width: 768px) {
+        .panels {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <button id="test">测试速度</button>
+    </div>
+    <script>
+      let t1, t0
+      // 创建多层级目录
+      const createDirectoryPath = async (path) => {
+        const root = await getOPFSRoot()
+        const pathParts = path.split('/').filter((part) => part.length > 0)
+
+        let currentDir = root
+        for (const part of pathParts) {
+          currentDir = await currentDir.getDirectoryHandle(part, {
+            create: true,
+          })
+        }
+
+        return currentDir
+      }
+      // 批量保存多个文件到 OPFS
+      const saveBatchToOPFS = async (files) => {
+        try {
+          const totalFiles = files.filter((f) => !f.isDirectory).length
+          let processedFiles = 0
+
+          for (const file of files) {
+            if (file.isDirectory) {
+              console.log(file,'isDirectory');
+              
+              // 创建目录
+              await createDirectoryPath(file.path)
+            } else {
+              // 保存文件
+              const pathParts = file.path
+                .split('/')
+                .filter((part) => part.length > 0)
+              const filename = pathParts.pop() || file.path
+              const dirPath = pathParts.join('/')
+
+              let targetDir
+              if (dirPath) {
+                targetDir = await createDirectoryPath(dirPath)
+              } else {
+                targetDir = await getOPFSRoot()
+              }
+
+              const fileHandle = await targetDir.getFileHandle(filename, {
+                create: true,
+              })
+              const writable = await fileHandle.createWritable()
+              await writable.write(file.content)
+              await writable.close()
+            }
+          }
+          const res = await loadFileList()
+        } catch (error) {
+          console.error('OPFS 批量保存错误:', error)
+        }
+      }
+      // 从 ZIP 解压所有文件到 OPFS
+      const extractZipToOPFS = async (zip) => {
+        try {
+          const fileEntries = Object.entries(zip.files)
+          // 准备文件列表
+          const extractedFiles = []
+
+          for (let i = 0; i < fileEntries.length; i++) {
+            const [path, zipEntry] = fileEntries[i]
+
+            if (zipEntry.dir) {
+              // 这是一个目录
+              extractedFiles.push({
+                path: path.replace(/\/$/, ''), // 移除末尾的斜杠
+                content: '',
+                isDirectory: true,
+              })
+            } else {
+              // 这是一个文件
+              const content = await zipEntry.async('string')
+              extractedFiles.push({
+                path,
+                content,
+                isDirectory: false,
+              })
+            }
+          }
+          // 批量保存到 OPFS
+          await saveBatchToOPFS(extractedFiles)
+        } catch (error) {
+          console.error('ZIP 解压错误:', error)
+        }
+      }
+      const zipUrl = 'http://localhost:3001/download.zip'
+      // 使用JSZip解压数据
+      const zip = new JSZip()
+      async function testRangeRequest(start, end) {
+        const headers = {}
+        if (end !== undefined) {
+          headers['Range'] = `bytes=${start}-${end}`
+        } else {
+          headers['Range'] = `bytes=${start}-`
+        }
+
+        const response = await fetch(zipUrl, { headers })
+        return {
+          status: response.status,
+          size: response.headers.get('content-length'),
+          range: response.headers.get('content-range'),
+          data: await response.arrayBuffer(),
+        }
+      }
+      // 获取 OPFS 根目录
+      const getOPFSRoot = async () => {
+        return await navigator.storage.getDirectory()
+      }
+      // 从 OPFS 读取文件（支持不同格式）
+      const readFromOPFS = async (filename, format = 'text') => {
+        t0 = performance.now()
+        try {
+          const root = await getOPFSRoot()
+          const fileHandle = await root.getFileHandle(filename)
+          const file = await fileHandle.getFile()
+          let content
+          // switch (format) {
+          //   case 'arrayBuffer':
+          //     content = await file.arrayBuffer()
+          //     break
+          //   case 'blob':
+          //     content = file
+          //     break
+          //   default:
+          //     content = await file.text()
+          // }
+          console.log(filename, 'filename')
+          content = await file.arrayBuffer()
+
+          return content
+        } catch (error) {
+          console.error(error, 'error')
+
+          return null
+        }
+      }
+      // 保存数据到 OPFS（支持二进制和文本数据）
+      const saveToOPFS = async (filename, content, options) => {
+        try {
+          const root = await getOPFSRoot()
+
+          // 创建或获取文件句柄
+          const fileHandle = await root.getFileHandle(filename, {
+            create: true,
+          })
+
+          // 创建可写流
+          const writable = await fileHandle.createWritable()
+
+          if (options?.showProgress && content instanceof ArrayBuffer) {
+            // 分块写入大文件以支持进度显示
+            const chunkSize = 64 * 1024 // 64KB chunks
+            const totalSize = content.byteLength
+
+            for (let offset = 0; offset < totalSize; offset += chunkSize) {
+              const chunk = content.slice(
+                offset,
+                Math.min(offset + chunkSize, totalSize)
+              )
+              await writable.write(chunk)
+
+              const progress = Math.round(
+                ((offset + chunk.byteLength) / totalSize) * 100
+              )
+              // 允许UI更新
+              await new Promise((resolve) => setTimeout(resolve, 1))
+            }
+          } else {
+            await writable.write(content)
+          }
+
+          await writable.close()
+
+          const file = await fileHandle.getFile()
+
+          await loadFileList()
+          return fileHandle
+        } catch (error) {
+          console.error('OPFS 保存错误:', error)
+          return null
+        }
+      }
+      // 加载文件列表
+
+      // 递归加载文件和目录列表
+      const loadFileList = async (basePath = '') => {
+        try {
+          const targetDir = basePath
+            ? await getDirectoryHandle(basePath)
+            : await getOPFSRoot()
+          const fileList = []
+          const dirList = []
+
+          await loadDirectoryRecursive(targetDir, basePath, fileList, dirList)
+          // 按修改时间排序（最新的在前）
+          fileList.sort((a, b) => b.lastModified - a.lastModified)
+
+          // 更新统计信息
+          const totalSize = fileList.reduce((sum, file) => sum + file.size, 0)
+          const newStats = {
+            totalFiles: fileList.length,
+            totalDirectories: dirList.length,
+            totalSize,
+          }
+
+          // 尝试获取存储配额信息
+          if ('storage' in navigator && 'estimate' in navigator.storage) {
+            try {
+              const estimate = await navigator.storage.estimate()
+              if (estimate.quota && estimate.usage) {
+                newStats.availableSpace = estimate.quota - estimate.usage
+                newStats.usedSpace = estimate.usage
+              }
+            } catch (quotaError) {
+              // 忽略配额获取失败
+            }
+          }
+        } catch (error) {}
+      }
+      // 递归加载目录内容
+      const loadDirectoryRecursive = async (
+        dirHandle,
+        dirPath,
+        fileList,
+        dirList
+      ) => {
+        try {
+          for await (const [name, handle] of dirHandle.entries()) {
+            const fullPath = dirPath ? `${dirPath}/${name}` : name
+
+            if (handle.kind === 'file') {
+              const file = await handle.getFile()
+              fileList.push({
+                name,
+                path: fullPath,
+                size: file.size,
+                handle: handle,
+                lastModified: file.lastModified,
+                type: file.type,
+              })
+            } else if (handle.kind === 'directory') {
+              const subDirList = []
+              const subFileList = []
+
+              await loadDirectoryRecursive(
+                handle,
+                fullPath,
+                subFileList,
+                subDirList
+              )
+
+              dirList.push({
+                name,
+                path: fullPath,
+                handle: handle,
+                children: [...subFileList, ...subDirList],
+              })
+
+              // 将子文件和子目录添加到主列表
+              fileList.push(...subFileList)
+              dirList.push(...subDirList)
+            }
+          }
+          console.log(fileList, '===fileList===')
+        } catch (error) {
+          console.warn(`加载目录 ${dirPath} 失败:`, error)
+        }
+      }
+      // 解压zip
+      const func = async () => {
+        const rangeResult = await testRangeRequest(0, 1023)
+        const response = await fetch(zipUrl)
+        const arrayBuffer = await response.arrayBuffer()
+        const zipFile = await zip.loadAsync(arrayBuffer)
+        extractZipToOPFS(zipFile)
+        const configFile = zip.file('config.json')
+        const configContent = await configFile.async('string')
+        console.log(zipFile, await getOPFSRoot(), '=======')
+        // const ab = await (await fileHandle.getFile()).arrayBuffer()
+        // await saveToOPFS(`extracted-config.json`, configContent)
+      }
+
+      // 测试不跨域直接获取文件
+      document.getElementById('test').addEventListener('click', async () => {
+        const res = await readFromOPFS('test2.js')
+        t1 = performance.now()
+        console.log(t1 - t0, res, '===直接读取===')
+      })
+      const OpfsAPI = {
+        getOPFSRoot,
+        readFromOPFS,
+        excatorZip: func,
+      }
+      // 监听跨域消息
+      window.addEventListener('message', async (evt) => {
+        // 检查 source/origin...
+        const { id, method, args } = evt.data
+        let result, error
+        if (!OpfsAPI[method]) return
+        try {
+          result = await OpfsAPI[method](...args)
+        } catch (e) {
+          error = e.message
+        }
+        evt.source.postMessage({ id, result, error }, evt.origin)
+        console.log(result, '===读取===')
+      })
+    </script>
+  </body>
+</html>
