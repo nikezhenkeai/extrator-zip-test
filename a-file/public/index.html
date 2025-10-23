@@ -219,6 +219,7 @@
           <div style="display: flex; flex-direction: row">
             <button id="extractBtn">解压文件</button>
             <button id="readFileBtn">读取文件</button>
+            <button id="test">启动流式测试</button>
           </div>
         </div>
 
@@ -230,18 +231,54 @@
         ></iframe>
       </div>
     </div>
-
+    <script src="./tranformA.js"></script>
     <script>
+      // 用于收集所有 chunk
+      let receivedChunks = []
+      let writableStreamWriter = null
+
+      // 创建 WritableStream，写入到 receivedChunks
+      const writableStream = new WritableStream({
+        write(chunk) {
+          receivedChunks.push(chunk)
+        },
+        close() {
+          // 合并所有 chunk
+          const totalLength = receivedChunks.reduce(
+            (sum, c) => sum + c.byteLength,
+            0
+          )
+          const result = new Uint8Array(totalLength)
+          let offset = 0
+          for (const chunk of receivedChunks) {
+            result.set(new Uint8Array(chunk), offset)
+            offset += chunk.byteLength
+          }
+          // 你可以在这里处理 result，比如保存到文件、显示等
+          const text = new TextDecoder().decode(result)
+          console.log('接收完成，总字节数:', text, totalLength)
+          // 清空
+          receivedChunks = []
+        },
+      })
+
+      // 获取 writer
+      writableStreamWriter = writableStream.getWriter()
       function createRemoteProxy(targetWin, targetOrigin = '*') {
         let msgId = 0
         let t0, t1
         const pending = new Map()
         window.addEventListener('message', (evt) => {
-          const { id, result, error } = evt.data
+          const { id, result, error, type, chunk } = evt.data
           t1 = performance.now()
-          
-          if (!id) return
-          console.log(t1 - t0, '===proxy代理===',evt.data)
+
+          if (evt.origin !== 'http://localhost:3001') return
+          console.log('===proxy代理===', evt.data)
+          if (type === 'streamChunk' && chunk) {
+            writableStreamWriter.write(chunk)
+          } else if (type === 'streamEnd') {
+            writableStreamWriter.close()
+          }
           const pr = pending.get(id)
           if (pr) {
             pending.delete(id)
@@ -284,9 +321,12 @@
       document
         .getElementById('readFileBtn')
         .addEventListener('click', async () => {
-          const res = await proxy.readFromOPFS('test2.js')
+          const res = await proxy.readFromOPFS('base/script.js')
           // console.log(res, 'res---')
         })
+      document.getElementById('test').addEventListener('click', async () => {
+        startStreamTransfer()
+      })
     </script>
   </body>
 </html>

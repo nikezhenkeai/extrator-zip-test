@@ -12,6 +12,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "zstd-codec": "^0.1.5"
   }
 }

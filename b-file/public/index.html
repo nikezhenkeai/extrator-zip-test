@@ -216,7 +216,67 @@
     <div class="container">
       <button id="test">测试速度</button>
     </div>
+    <script src="./test.js"></script>
+    <script src="./transform.js"></script>
     <script>
+      // analyzeZipStructure()
+      const testSmartRangeRequest = async () => {
+        try {
+          const zipSize = -100000
+          const zipUrl = 'http://localhost:3001/test.zip'
+          const headResponse = await fetch(zipUrl, {
+            headers: { Range: 'bytes=0-3' },
+          })
+          const headData = await headResponse.arrayBuffer()
+          const signature = new Uint8Array(headData)
+          const isZip =
+            signature[0] === 0x50 &&
+            signature[1] === 0x4b &&
+            signature[2] === 0x03 &&
+            signature[3] === 0x04
+
+          const endSize = Math.min(1024, zipSize)
+          const endResponse = await fetch(zipUrl, {
+            headers: { Range: `bytes=${zipSize - endSize}-${zipSize - 1}` },
+          })
+          const endData = await endResponse.arrayBuffer()
+          console.log(endResponse, endData, 'endResponse')
+
+          const endView = new Uint8Array(endData)
+          let eocdOffset = -1
+          // 从末尾开始查找 End of Central Directory 签名 (0x504B0506)
+          for (let i = endView.length - 22; i >= 0; i--) {
+            if (
+              endView[i] === 0x50 &&
+              endView[i + 1] === 0x4b &&
+              endView[i + 2] === 0x05 &&
+              endView[i + 3] === 0x06
+            ) {
+              eocdOffset = i
+              break
+            }
+          }
+
+          if (eocdOffset >= 0) {
+            // 读取条目数量
+            const totalEntries =
+              endView[eocdOffset + 10] | (endView[eocdOffset + 11] << 8)
+            console.log(`✓ ZIP 包含 ${totalEntries} 个条目`)
+          } else {
+            console.error('⚠ 未找到中央目录结束记录（可能需要更大的读取范围）')
+          }
+
+          // // 步骤 4: 为了完整演示，下载完整文件并解压
+          // const fullResponse = await fetch(zipUrl)
+          // const fullData = await fullResponse.arrayBuffer()
+
+          // const JSZip = (await import('jszip')).default
+          // const zip = await JSZip.loadAsync(fullData)
+          // const fileNames = Object.keys(zip.files)
+        } catch (error) {
+          console.error('Smart range request test error:', error)
+        }
+      }
       let t1, t0
       // 创建多层级目录
       const createDirectoryPath = async (path) => {
@@ -240,8 +300,8 @@
 
           for (const file of files) {
             if (file.isDirectory) {
-              console.log(file,'isDirectory');
-              
+              console.log(file, 'isDirectory')
+
               // 创建目录
               await createDirectoryPath(file.path)
             } else {
@@ -268,6 +328,8 @@
             }
           }
           const res = await loadFileList()
+          console.log(res, '===批量保存完成===');
+          
         } catch (error) {
           console.error('OPFS 批量保存错误:', error)
         }
@@ -305,7 +367,7 @@
           console.error('ZIP 解压错误:', error)
         }
       }
-      const zipUrl = 'http://localhost:3001/download.zip'
+      const zipUrl = 'http://localhost:3001/test.zip'
       // 使用JSZip解压数据
       const zip = new JSZip()
       async function testRangeRequest(start, end) {
@@ -502,12 +564,73 @@
         // await saveToOPFS(`extracted-config.json`, configContent)
       }
 
-      // 测试不跨域直接获取文件
+      // 新增：通过 ReadableStream 读取 OPFS 文件内容
+      function createOPFSReadableStream(filename, chunkSize = 64 ) {
+        let file,
+          fileSize,
+          offset = 0
+        let fileHandle
+
+        return new ReadableStream({
+          async start(controller) {
+            // 获取 OPFS 文件句柄和文件对象
+            const root = await getOPFSRoot()
+            fileHandle = await root.getFileHandle(filename)
+            file = await fileHandle.getFile()
+            fileSize = file.size
+          },
+          async pull(controller) {
+            if (offset >= fileSize) {
+              controller.close()
+              window.parent.postMessage(
+                { type: 'streamEnd', filename },
+                'http://127.0.0.1:3001'
+              )
+              return
+            }
+            // 读取 chunk
+            const end = Math.min(offset + chunkSize, fileSize)
+            const blob = file.slice(offset, end)
+            const chunk = await blob.arrayBuffer()
+            controller.enqueue(chunk)
+            window.parent.postMessage(
+              { type: 'streamChunk', filename, chunk, id: 123 },
+              'http://127.0.0.1:3001',
+              [chunk]
+            )
+            offset = end
+          },
+          cancel() {
+            // 可选：取消读取
+          },
+        })
+      }
+
+      // 示例：本地读取 test2.js 并输出到控制台
+      async function testOPFSStreamRead() {
+        const stream = createOPFSReadableStream('config.json')
+        const reader = stream.getReader()
+        let total = 0
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          total += value.byteLength
+          console.log('读取 chunk:', value)
+        }
+        console.log('读取完成，总字节数:', total)
+      }
+
+      // 你可以在按钮点击时测试
       document.getElementById('test').addEventListener('click', async () => {
-        const res = await readFromOPFS('test2.js')
-        t1 = performance.now()
-        console.log(t1 - t0, res, '===直接读取===')
+        await testOPFSStreamRead()
       })
+      // // 测试不跨域直接获取文件
+      // document.getElementById('test').addEventListener('click', async () => {
+      //   // const res = await readFromOPFS('test2.js')
+      //   // t1 = performance.now()
+      //   // console.log(t1 - t0, res, '===直接读取===')
+      //   testSmartRangeRequest()
+      // })
       const OpfsAPI = {
         getOPFSRoot,
         readFromOPFS,
@@ -524,8 +647,10 @@
         } catch (e) {
           error = e.message
         }
-        evt.source.postMessage({ id, result, error }, evt.origin)
-        console.log(result, '===读取===')
+        console.log(evt.origin, evt.source, 'evt.origin')
+
+        evt.source.postMessage({ id, result, error }, evt.origin, [result])
+        console.log(result, await OpfsAPI[method](...args), '===读取===')
       })
     </script>
   </body>
